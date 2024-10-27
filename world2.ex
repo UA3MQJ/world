@@ -1,4 +1,4 @@
-defmodule World do
+defmodule World2 do
   @callback hash(wrld :: term()) :: term()
   @callback start() :: term()
   @callback is_target(wrld :: term()) :: term()
@@ -38,58 +38,40 @@ defmodule World do
   # end
 
   # хранилище миров - ets
-  def lib(mod) do
-    tbl = :ets.new(:wrld_list, [])
-    lib(mod, tbl)
-  end
-  def lib(mod, tbl) do
-    receive do
-      :stop -> :ok
-      {wrld, pid} ->
-        w_hash = apply(mod, :hash, [wrld])
-        case :ets.member(tbl, w_hash) do
-          false ->
-            send(pid, :ok)
-            :ets.insert(tbl, {w_hash})
-          true ->
-            send(pid, :exist)
-        end
-        lib(mod, tbl)
-      _ -> :ok
-    end
-  end
+
 
   # на вход подается список кортежей миров, список делится на первый мир в списке Wrld
   # и на хвост Tail из оставшихся
   def ent(_mod, []), do: :ok
 
   def ent(mod, [wrld|tail]) do
-    ent(mod, wrld)
-    ent(mod, tail)
-
-    # case is_overload() do
-    #   false ->
-    #     try do
-    #         spawn(__MODULE__, :ent, [mod, wrld])
-    #         ent(mod, tail)
-    #     catch
-    #       _ ->
-    #         Logger.error("world:ent spawn overload")
-    #         ent(mod, wrld)
-    #         ent(mod, tail)
-    #     end
-    #   _ ->
-    #     ent(mod, wrld)
-    #     ent(mod, tail)
-    # end
+    # ent(mod, wrld) # safe variant
+    # ent(mod, tail)
+    case is_overload() do
+      false ->
+        try do
+            spawn(__MODULE__, :ent, [mod, wrld])
+            ent(mod, tail)
+        catch
+          _ ->
+            Logger.error("world:ent spawn overload")
+            ent(mod, wrld)
+            ent(mod, tail)
+        end
+      _ ->
+        ent(mod, wrld)
+        ent(mod, tail)
+    end
   end
 
   # на вход подается кортеж одного мира
   def ent(mod, wrld) do
     # проверяем существует ли такой мир уже
-    :global.send('lib_srv', {wrld, self()})
-    receive do
-      :ok ->
+
+    w_hash = apply(mod, :hash, [wrld])
+    case :ets.member(:wrld_list, w_hash) do
+      false ->
+        _res = :ets.insert(:wrld_list, {w_hash})
         # является ли целевым
         apply(mod, :is_target, [wrld])
         # является ли тупиком
@@ -101,7 +83,10 @@ defmodule World do
         else
           :ok
         end
-      :exist ->
+      true -> # exists
+        :ok
+      err ->
+        Logger.error("member err=#{inspect(err)}")
         :ok
     end
   end
@@ -109,9 +94,9 @@ defmodule World do
   def start(mod, start_world) do
     Logger.info("World.start mod=#{inspect(mod)}")
     Logger.info("World.start start_world=#{inspect(start_world)}")
-    pid_lib_srv = spawn(__MODULE__, :lib, [mod])
-    :global.re_register_name('lib_srv', pid_lib_srv)
-    Logger.info("World.start lib(worldlist) PID=#{inspect(pid_lib_srv)}")
+
+    :ets.new(:wrld_list, [:named_table, :public, write_concurrency: true])
+
     pid_lib_srv = spawn(__MODULE__, :ent, [mod, start_world])
     Logger.info("World.start ent PID=#{inspect(pid_lib_srv)}")
   end
